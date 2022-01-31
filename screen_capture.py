@@ -1,12 +1,17 @@
+import os
+import sys
 import time
-
 import mss
 import mss.tools
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageEnhance
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import config
+import image_similarity_measures
+from image_similarity_measures.quality_metrics import rmse, ssim, sre
+import pytesseract
+import easyocr
 
 
 class ScreenCapture:
@@ -16,6 +21,9 @@ class ScreenCapture:
         self.current_img = None
         self.monitor = None
         self.capturing = True
+
+        # TODO switch to GPU for CUDA support
+        self.reader = easyocr.Reader(['en'], gpu=False)  # this needs to run only once to load the model into memory
 
         # Read monitor number from config, if -1 get scav_monitor
         if int(config.get_config_value_by_id(config.MONITOR_NUMBER)) == -1:
@@ -60,13 +68,9 @@ class ScreenCapture:
         self.current_img = self.sct.grab(self.monitor)
 
     # Returns PIL Image
-    # TODO Remove debug shows
     def crop_minimap_from_current_img(self):
-        pil_img = Image.frombytes("RGB", (self.current_img.size.width, self.current_img.size.height), self.current_img.rgb)
-    
-        # img = Image.open("main_map.png")
-        # plt.imshow(pil_img)
-        # plt.show()
+        pil_img = Image.frombytes("RGB", (self.current_img.size.width, self.current_img.size.height),
+                                  self.current_img.rgb)
 
         height, width = pil_img.size
         lum_img = Image.new('L', (height, width), 0)
@@ -77,18 +81,120 @@ class ScreenCapture:
                       fill=255, outline="white")
         img_arr = np.array(pil_img)
         lum_img_arr = np.array(lum_img)
-        # plt.imshow(Image.fromarray(lum_img_arr))
-        # plt.show()
-        final_img_arr = np.dstack((img_arr, lum_img_arr))
-        # plt.imshow(Image.fromarray(final_img_arr))
-        # plt.show()
-        # Image.fromarray(final_img_arr).show()
-        return Image.fromarray(final_img_arr)
 
+        final_img_arr = np.dstack((img_arr, lum_img_arr))
+        return Image.fromarray(final_img_arr[96:318, 57:275])
+
+    def get_degree_from_current_image(self):
+        pil_img = Image.frombytes("RGB", (self.current_img.size.width, self.current_img.size.height),
+                                  self.current_img.rgb)
+        array_img = np.array(pil_img)
+        crop_img = Image.fromarray(array_img[62:82, 180:220])
+        crop_img = ImageOps.invert(crop_img.convert('L'))
+        '''
+        enhancer = ImageEnhance.Contrast(crop_img)
+        enhancer.enhance(2)
+        '''
+
+        '''
+        array2 = np.asarray(crop_img)
+        array2[array2 < 128] = 0  # Black
+        array2[array2 >= 128] = 255  # White
+
+        array2 = cv2.copyMakeBorder(array2, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        crop_img = Image.fromarray(array2)
+        '''
+
+        array_img = np.asarray(crop_img)
+        blur = cv2.GaussianBlur(array_img, (5, 5), 0)
+        ret3, th3 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        crop_img = Image.fromarray(th3)
+        # crop_img.show()
+        # nr = pytesseract.image_to_string(image=crop_img, config='digits --psm = 9 -c tessedit_write_images=1').rstrip()
+        nr = self.reader.readtext(np.array(crop_img), detail=0, allowlist="01234567898")
+        print(nr)
+        try:
+            return int(nr[0].rstrip())
+        except ValueError:
+            print("Error, NAN")
+            crop_img.show()
+        except IndexError:
+            print("Error, NAN")
+            crop_img.show()
+
+    def north_minimap(self, minimap, degree):
+        return minimap.rotate(degree)
+
+    def find_spawn_location(self):
+        test_img = cv2.imread('spawnpoints/8/8-2.png')
+
+        ssim_measures = {}
+        rmse_measures = {}
+        sre_measures = {}
+
+        scale_percent = 100  # percent of original img size
+        width = int(test_img.shape[1] * scale_percent / 100)
+        height = int(test_img.shape[0] * scale_percent / 100)
+        dim = (width, height)
+
+        data_dir = 'spawnpoints/testing_dir'
+
+        for file in os.listdir(data_dir):
+            img_path = os.path.join(data_dir, file)
+            data_img = cv2.imread(img_path)
+            resized_img = cv2.resize(data_img, dim, interpolation=cv2.INTER_AREA)
+            ssim_measures[img_path] = ssim(test_img, resized_img)
+            rmse_measures[img_path] = rmse(test_img, resized_img)
+            sre_measures[img_path] = sre(test_img, resized_img)
+
+        res_ssim = self.calc_closest_val(ssim_measures, True)
+        res_rmse = self.calc_closest_val(rmse_measures, False)
+        res_sre = self.calc_closest_val(sre_measures, True)
+
+        print("The most similar according to SSIM: ", res_ssim)
+        print("The most similar according to RMSE: ", res_rmse)
+        print("The most similar according to SRE: ", res_sre)
+
+    @staticmethod
+    def calc_closest_val(dict, checkMax):
+        result = {}
+        if (checkMax):
+            closest = max(dict.values())
+        else:
+            closest = min(dict.values())
+
+        for key, value in dict.items():
+            print("The difference between ", key, " and the original image is : \n", value)
+            if (value == closest):
+                result[key] = closest
+
+        print("The closest value: ", closest)
+        print("######################################################################")
+        return result
+
+    @staticmethod
+    def crop_img():
+        path = 'spawnpoints/21/minimap.png'
+        img = Image.open(path)
+        img = np.array(img)
+        img = Image.fromarray(img[96:318, 57:275])
+        img.save(path)
 
 
 if __name__ == "__main__":
     screen_capture = ScreenCapture()
     # print(config.get_config_value_by_id(config.MONITOR_NUMBER))
+
     screen_capture.capture_whole_screen()
-    screen_capture.crop_minimap_from_current_img()
+    mini_map = screen_capture.crop_minimap_from_current_img()
+    mini_map = screen_capture.north_minimap(mini_map, screen_capture.get_degree_from_current_image() * -1)
+    mini_map.save("spawnpoints/unsorted/minimap.png", "PNG")
+
+   # screen_capture.find_spawn_location()
+
+    '''
+    while True:
+        screen_capture.capture_whole_screen()
+        screen_capture.get_degree_from_current_image()
+    '''
