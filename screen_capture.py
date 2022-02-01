@@ -96,23 +96,22 @@ class ScreenCapture:
         enhancer.enhance(2)
         '''
 
-        '''
-        array2 = np.asarray(crop_img)
-        array2[array2 < 128] = 0  # Black
-        array2[array2 >= 128] = 255  # White
+        # PREPROCESSING 1
+        preprocessing1 = np.asarray(crop_img).copy()
+        preprocessing1[preprocessing1 < 128] = 0  # Black
+        preprocessing1[preprocessing1 >= 128] = 255  # White
+        # array2 = cv2.copyMakeBorder(array2, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        preprocessing1 = Image.fromarray(preprocessing1)
 
-        array2 = cv2.copyMakeBorder(array2, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-        crop_img = Image.fromarray(array2)
-        '''
-
-        array_img = np.asarray(crop_img)
-        blur = cv2.GaussianBlur(array_img, (5, 5), 0)
-        ret3, th3 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        crop_img = Image.fromarray(th3)
-        # crop_img.show()
         # nr = pytesseract.image_to_string(image=crop_img, config='digits --psm = 9 -c tessedit_write_images=1').rstrip()
-        nr = self.reader.readtext(np.array(crop_img), detail=0, allowlist="01234567898")
+        nr = self.reader.readtext(np.array(preprocessing1), detail=0, allowlist="01234567898")
+        if not nr:
+            # PREPROCESSING 2
+            array_img = np.asarray(crop_img).copy()
+            blur = cv2.GaussianBlur(array_img, (5, 5), 0)
+            ret3, th3 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            preprocessing2 = Image.fromarray(th3)
+            nr = self.reader.readtext(np.array(preprocessing2), detail=0, allowlist="01234567898")
         print(nr)
         try:
             return int(nr[0].rstrip())
@@ -123,7 +122,8 @@ class ScreenCapture:
             print("Error, NAN")
             crop_img.show()
 
-    def north_minimap(self, minimap, degree):
+    @staticmethod
+    def north_minimap(minimap, degree):
         return minimap.rotate(degree)
 
     def find_spawn_location(self):
