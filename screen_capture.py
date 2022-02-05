@@ -120,7 +120,8 @@ class ScreenCapture:
             crop_img.show()
         except IndexError:
             print("Error, NAN")
-            crop_img.show()
+            preprocessing1.show()
+            preprocessing2.show()
 
     @staticmethod
     def north_minimap(minimap, degree):
