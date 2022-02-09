@@ -1,41 +1,52 @@
+import time
+
 import PySimpleGUI as sg
-import os, os.path
 from screen_capture import ScreenCapture
-from PIL import Image, ImageTk
-import shutil
+from path_tracker import PathTracker
+from PIL import Image, ImageTk, ImageDraw
 
 
 screen_capture = ScreenCapture()
+path_tracker = PathTracker()
 
 sg.theme('Black')
 # All the stuff inside your window.
-layout = [  [sg.Text('Newest minimap screenshot:')],
-            [sg.Image(filename='', key='-IMAGE-')],
-            [sg.Combo([str(x) for x in range(22)],default_value='1',key='-number-')],
-            [sg.Button('Take new image', key='-snap-'),  sg.Button('Save', key='-save-')] ]
+layout = [
+    [sg.Push(), sg.Text("Path travelled ", font=("Arial", 20), pad=(200, 20)), sg.Push(), sg.Text("CURRENT STATE", font=("Arial", 20), key="-CATEGORY-"), sg.Push()],
+    [sg.Push(), sg.Image(filename='small_map.png', key='-MAP-', size=(512, 512)), sg.Push(), sg.Push(),sg.Push()],
+    [sg.VPush()]
+]
 
 # Create the Window
 window = sg.Window('ScavStats', layout)
 # Event Loop to process "events" and get the "values" of the inputs
-while True:
-    event, values = window.read()
+while True:                    #
+    event, values = window.read(timeout=1)
     if event == sg.WIN_CLOSED:
         break
-    if event == '-snap-':
-        screen_capture.capture_whole_screen()
-        mini_map = screen_capture.crop_minimap_from_current_img()
-        mini_map = screen_capture.north_minimap(mini_map, screen_capture.get_degree_from_current_image() * -1)
-        mini_map.save("spawnpoints/unsorted/minimap.png", "PNG")
+    screen_capture.capture_whole_screen()
 
-    if event == '-save-':
-        nr = str(values["-number-"])
-        count = len([name for name in os.listdir('spawnpoints/' + nr + "/") if os.path.isfile(name)])
-        shutil.copyfile("spawnpoints/unsorted/minimap.png", "spawnpoints/" + nr + "/" + nr + "-" + str(count) + ".png")
-        os.remove("spawnpoints/unsorted/minimap.png")
+    # Ingame, loading screen, map, crafting menu, scoreboard...
+    screen_capture.categorize()
+    window["-CATEGORY-"].update(screen_capture.current_category)
 
-    if os.path.isfile("spawnpoints/unsorted/minimap.png"):
-        # array_img = np.array(Image.open("spawnpoints/unsorted/minimap.png"))
-        # imgbytes = cv2.imencode(".png", cv2.cvtColor(array_img, cv2.COLOR_RGB2BGR))[1].tobytes()
-        img = Image.open("spawnpoints/unsorted/minimap.png")
-        image = ImageTk.PhotoImage(image=img)
-        window['-IMAGE-'].update(data=image)
+    # Only when actually ingame
+    if screen_capture.current_category == "ingame":
+        # Check if we already have located the spawn
+        if not path_tracker.has_current_location():
+            # Further wait for fade in
+            time.sleep(1)
+            mini_map = screen_capture.crop_minimap_from_current_img()
+            mini_map = screen_capture.north_minimap(mini_map, screen_capture.get_degree_from_current_image() * -1)
+            spawnpoint_nr = path_tracker.find_spawn_location(mini_map)
+            path_tracker.update_coords_from_spawnpoint_nr(spawnpoint_nr)
+            img = Image.open("main_map.png").convert('RGB')
+            # TODO Extract draw method
+            draw = ImageDraw.Draw(img)
+            x = path_tracker.last_coords[0]
+            y = path_tracker.last_coords[1]
+            draw.ellipse((x-50, y-50, x+50, y+50), fill = 'red', outline ='red')
+
+            # TODO Extract img_update method
+            img = img.resize((512, 512))
+            window['-MAP-'].update(data=ImageTk.PhotoImage(img))

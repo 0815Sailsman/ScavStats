@@ -1,17 +1,15 @@
-import os
-import sys
+import os, os.path
+import shutil
 import time
 import mss
 import mss.tools
-from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageEnhance
+from PIL import Image, ImageDraw, ImageOps
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import config
-import image_similarity_measures
-from image_similarity_measures.quality_metrics import rmse, ssim, sre
-import pytesseract
 import easyocr
+import image_compare
 
 
 class ScreenCapture:
@@ -19,6 +17,8 @@ class ScreenCapture:
     def __init__(self):
         self.sct = mss.mss()
         self.current_img = None
+        self.current_category = "lobby"
+        self.cat_cooldown = 0
         self.monitor = None
         self.capturing = True
 
@@ -123,56 +123,63 @@ class ScreenCapture:
             preprocessing1.show()
             preprocessing2.show()
 
+    # TODO Add differentiated ingame categories like crafting, leaderboard etc.
+    def categorize(self):
+        original = np.asarray(self.current_img)
+        original = cv2.cvtColor(original, cv2.COLOR_RGB2BGR)
+        original = cv2.resize(original, (192, 108), interpolation=cv2.INTER_AREA)
+
+        scale_percent = 100  # percent of original img size
+        width = int(original.shape[1] * scale_percent / 100)
+        height = int(original.shape[0] * scale_percent / 100)
+        dim = (width, height)
+
+        data_dir = 'categories'
+
+        '''
+        ssim_measures, rmse_measures, sre_measures = image_compare.collect_all_measures_for_dir(data_dir, original, dim)
+        res_ssim, res_rmse, res_sre = image_compare.calc_all_results(
+            (ssim_measures, True),
+            (rmse_measures, False),
+            (sre_measures, True))
+        '''
+        ssim_measures = image_compare.collect_ssim_measures_for_dir(data_dir, original, dim)
+        res_ssim = image_compare.calc_closest_val(ssim_measures, True)
+
+        # Currently only looking at SSIM because it has the best results
+        # print(str(res_ssim) + "\n" + str(res_rmse) + "\n" + str(res_sre))
+        solution_string = str(res_ssim).split("_")[0].split("\\")[2].rstrip()
+        cat_id = self.cat_string_to_id(solution_string)
+        # Check if this id is possible, because it can only step 1 (e.g. not from lobby to ingame)
+        lower = (cat_id - 1) if (cat_id - 1) >= 0 else self.get_last_cat_id()
+        upper = (cat_id + 1) if (cat_id + 1) <= self.get_last_cat_id() else 0
+        if cat_id in [lower, self.cat_string_to_id(solution_string), upper] and self.cat_cooldown == 0 and self.current_category is not solution_string:
+            self.current_category = solution_string
+            self.cat_cooldown = 10
+        print(solution_string)
+        self.cat_cooldown = self.cat_cooldown -1 if self.cat_cooldown  > 0 else self.cat_cooldown
+
+    @staticmethod
+    def cat_string_to_id(text):
+        if text == "lobby":
+            return 0
+        elif text == "select":
+            return 1
+        elif text == "loading":
+            return 2
+        elif text == "ingame":
+            return 3
+        elif text == "outro":
+            return 4
+
+    @staticmethod
+    def get_last_cat_id():
+        return 4
+
+
     @staticmethod
     def north_minimap(minimap, degree):
         return minimap.rotate(degree)
-
-    def find_spawn_location(self):
-        test_img = cv2.imread('spawnpoints/8/8-2.png')
-
-        ssim_measures = {}
-        rmse_measures = {}
-        sre_measures = {}
-
-        scale_percent = 100  # percent of original img size
-        width = int(test_img.shape[1] * scale_percent / 100)
-        height = int(test_img.shape[0] * scale_percent / 100)
-        dim = (width, height)
-
-        data_dir = 'spawnpoints/testing_dir'
-
-        for file in os.listdir(data_dir):
-            img_path = os.path.join(data_dir, file)
-            data_img = cv2.imread(img_path)
-            resized_img = cv2.resize(data_img, dim, interpolation=cv2.INTER_AREA)
-            ssim_measures[img_path] = ssim(test_img, resized_img)
-            rmse_measures[img_path] = rmse(test_img, resized_img)
-            sre_measures[img_path] = sre(test_img, resized_img)
-
-        res_ssim = self.calc_closest_val(ssim_measures, True)
-        res_rmse = self.calc_closest_val(rmse_measures, False)
-        res_sre = self.calc_closest_val(sre_measures, True)
-
-        print("The most similar according to SSIM: ", res_ssim)
-        print("The most similar according to RMSE: ", res_rmse)
-        print("The most similar according to SRE: ", res_sre)
-
-    @staticmethod
-    def calc_closest_val(dict, checkMax):
-        result = {}
-        if (checkMax):
-            closest = max(dict.values())
-        else:
-            closest = min(dict.values())
-
-        for key, value in dict.items():
-            print("The difference between ", key, " and the original image is : \n", value)
-            if (value == closest):
-                result[key] = closest
-
-        print("The closest value: ", closest)
-        print("######################################################################")
-        return result
 
     @staticmethod
     def crop_img():
@@ -182,20 +189,54 @@ class ScreenCapture:
         img = Image.fromarray(img[96:318, 57:275])
         img.save(path)
 
+    @staticmethod
+    def move_all_to_all():
+        for i in range(1, 23):
+            print("Starting dir " + str(i))
+            count = len([name for name in os.listdir('spawnpoints/' + str(i) + "/")])
+            print(count)
+            for j in range(count):
+                print("Copying file " + str(j))
+                shutil.copyfile("spawnpoints/" + str(i) + "/" + str(i) + "-" + str(j) + ".png",
+                                "spawnpoints/all/" + str(i) + "-" + str(j) + ".png")
+
+    @staticmethod
+    def downsize_hd_category_images():
+        for file in os.listdir("categories"):
+            img_path = os.path.join("categories", file)
+            data_img = cv2.imread(img_path)
+            if data_img.shape[0] == 1080 and data_img.shape[1] == 1920:
+                data_img = cv2.resize(data_img, (192, 108), interpolation=cv2.INTER_AREA)
+            Image.fromarray(data_img).convert("RGB").save(img_path)
+
 
 if __name__ == "__main__":
     screen_capture = ScreenCapture()
     # print(config.get_config_value_by_id(config.MONITOR_NUMBER))
 
+    '''
     screen_capture.capture_whole_screen()
     mini_map = screen_capture.crop_minimap_from_current_img()
     mini_map = screen_capture.north_minimap(mini_map, screen_capture.get_degree_from_current_image() * -1)
     mini_map.save("spawnpoints/unsorted/minimap.png", "PNG")
-
-   # screen_capture.find_spawn_location()
+    '''
 
     '''
     while True:
         screen_capture.capture_whole_screen()
         screen_capture.get_degree_from_current_image()
     '''
+
+    # screen_capture.move_all_to_all()
+
+    img_id = 0
+    while True:
+        screen_capture.capture_whole_screen()
+        img = Image.frombytes("RGB", (screen_capture.current_img.size.width, screen_capture.current_img.size.height),
+                              screen_capture.current_img.rgb).resize((192, 108))
+        img.save("categories/temp" + str(img_id) + ".png")
+        print("Saved " + str(img_id))
+        img_id += 1
+        time.sleep(.5)
+
+    # screen_capture.downsize_hd_category_images()
