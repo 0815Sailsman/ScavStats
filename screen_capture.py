@@ -151,13 +151,13 @@ class ScreenCapture:
         solution_string = str(res_ssim).split("_")[0].split("\\")[2].rstrip()
         cat_id = self.cat_string_to_id(solution_string)
         # Check if this id is possible, because it can only step 1 (e.g. not from lobby to ingame)
-        lower = (cat_id - 1) if (cat_id - 1) >= 0 else self.get_last_cat_id()
-        upper = (cat_id + 1) if (cat_id + 1) <= self.get_last_cat_id() else 0
-        if cat_id in [lower, self.cat_string_to_id(solution_string), upper] and self.cat_cooldown == 0 and self.current_category is not solution_string:
+        lower = (self.cat_string_to_id(self.current_category) - 1) if (self.cat_string_to_id(self.current_category) - 1) >= 0 else self.get_last_cat_id()
+        upper = (self.cat_string_to_id(self.current_category) + 1) if (self.cat_string_to_id(self.current_category) + 1) <= self.get_last_cat_id() else 0
+        if cat_id in [lower, self.cat_string_to_id(self.current_category), upper] and self.cat_cooldown == 0 and self.current_category is not solution_string:
             self.current_category = solution_string
             self.cat_cooldown = 10
         print(solution_string)
-        self.cat_cooldown = self.cat_cooldown -1 if self.cat_cooldown  > 0 else self.cat_cooldown
+        self.cat_cooldown = self.cat_cooldown -1 if self.cat_cooldown > 0 else self.cat_cooldown
 
     @staticmethod
     def cat_string_to_id(text):
